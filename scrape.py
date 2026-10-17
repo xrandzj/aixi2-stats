@@ -69,10 +69,13 @@ RE_BACKERS = re.compile(
 RE_GOAL = re.compile(r"目标金额\s*¥\s*([\d,]+)")
 
 DASH = "\u2014"
+# 手动触发（workflow_dispatch）默认只测试、不写文件，避免污染数据
+DRY_RUN = False
 
 
 # ---------------------------------------------------------------- 抓取
-def fetch_current() -> tuple[dt.datetime, int, float, float | None]:
+def fetch_current() -> tuple[int, float, float | None]:
+    """返回 (总人数, 总金额, 目标金额)。时间由调用方决定，便于吸附整点。"""
     req = urllib.request.Request(PROJECT_URL, headers={
         "User-Agent": UA,
         "Accept-Language": "zh-CN,zh;q=0.9",
@@ -88,7 +91,6 @@ def fetch_current() -> tuple[dt.datetime, int, float, float | None]:
 
     goal = RE_GOAL.search(raw)
     return (
-        dt.datetime.now(TZ),
         int(b.group(1).replace(",", "")),
         float(m.group(1).replace(",", "")),
         float(goal.group(1).replace(",", "")) if goal else None,
@@ -241,30 +243,44 @@ def build_html(rows: list[tuple[str, int, float]], latest_ts: str) -> str:
 
 # ---------------------------------------------------------------- 主流程
 def parse_mode() -> None:
-    """解析 --mode，把全局路径切换到对应数据集。"""
-    global MODE, TSV, HTML
+    """解析 --mode / --dry-run。"""
+    global MODE, TSV, HTML, DRY_RUN
     ap = argparse.ArgumentParser(description="艾希：续 摩点众筹统计")
     ap.add_argument("--mode", choices=sorted(MODES), default=None,
                     help="8h=每天3次；hourly=每小时")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="只抓取并打印结果，不写任何文件（手动触发测试用）")
     args, _ = ap.parse_known_args()
     if args.mode:
         MODE = args.mode
         TSV = MODES[MODE]["tsv"]
         HTML = MODES[MODE]["html"]
+    DRY_RUN = args.dry_run
 
 
 def main() -> int:
     parse_mode()
-    TSV.parent.mkdir(parents=True, exist_ok=True)
 
-    now, backers, raised, goal = fetch_current()
     rows = read_tsv()
+    now = dt.datetime.now(TZ)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    backers, raised, goal = fetch_current()
+
+    if DRY_RUN:
+        last = rows[-1] if rows else None
+        tail = (f"（上次 {last[0]}：{last[1]:,} 人 / ¥{last[2]:,.2f}）" if last else "（无历史）")
+        print(f"[{MODE}] dry-run: 抓取到 {stamp} {backers:,} 人 / ¥{raised:,.2f} {tail}")
+        print(f"[{MODE}] dry-run: 未写入任何文件")
+        return 0
+
+    TSV.parent.mkdir(parents=True, exist_ok=True)
 
     # 无历史：写入首条（首次启用某个 mode 时走这里）
     if not rows:
-        rows = [(now.strftime("%Y-%m-%d %H:%M:%S"), backers, raised)]
+        rows = [(stamp, backers, raised)]
         write_tsv(rows)
-        HTML.write_text(build_html(rows, rows[-1][0]), encoding="utf-8")
+        HTML.write_text(build_html(rows, stamp), encoding="utf-8")
         print(f"[{MODE}] initialized {TSV.name}: {rows[-1]}")
         return 0
 
@@ -275,7 +291,6 @@ def main() -> int:
         print(f"[{MODE}] no change since {last_ts}; skip")
         return 0
 
-    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
     rows.append((stamp, backers, raised))
     write_tsv(rows)
     HTML.write_text(build_html(rows, stamp), encoding="utf-8")
