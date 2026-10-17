@@ -1,16 +1,23 @@
-"""《艾希：续》摩点众筹自动统计（GitHub Actions 版）。
+"""《艾希：续》摩点众筹自动统计（GitHub Actions 版，双模式）。
 
-每小时由 GitHub Actions 调用一次：
+支持两个互相独立的数据集，各写各的表：
+
+  --mode 8h      每天 08:00 / 16:00 / 23:58（北京时间）
+                 → data/records-8h.tsv + index.html
+  --mode hourly  每小时整点
+                 → data/records-hourly.tsv + hourly.html
+
+单次运行做的事：
   1. 抓取摩点项目页当前总金额 / 总人数
-  2. 读取 records.tsv 最后一行，计算「较上次净增长」
-  3. 追加一行到 records.tsv（数据源 / 归档）
-  4. 重建 index.html（手机可看的网页表格）
+  2. 读取对应 TSV 最后一行，计算「较上次净增长」
+  3. 追加一行（数据源 / 归档）
+  4. 重建对应 HTML（手机可看的网页表格）
   5. 若数据无变化则跳过写入，避免刷空提交
 
 时区统一用 Asia/Shanghai（UTC+8）。本脚本只依赖标准库，可在任意环境运行。
 """
 
-import csv
+import argparse
 import datetime as dt
 import io
 import re
@@ -24,8 +31,29 @@ PROJECT_ID = "160465"
 TZ = ZoneInfo("Asia/Shanghai")
 
 BASE = Path(__file__).resolve().parent
-TSV = BASE / "records.tsv"
-HTML = BASE / "index.html"
+
+MODES = {
+    "8h": {
+        "tsv": BASE / "data" / "records-8h.tsv",
+        "html": BASE / "index.html",
+        "title": "《艾希：续》众筹统计表（每天 3 次）",
+        "note": "每天 08:00 / 16:00 / 23:58（北京时间）自动统计",
+        "other": "hourly.html",
+        "other_label": "切换到「每小时」表",
+    },
+    "hourly": {
+        "tsv": BASE / "data" / "records-hourly.tsv",
+        "html": BASE / "hourly.html",
+        "title": "《艾希：续》众筹统计表（每小时）",
+        "note": "每小时整点自动统计",
+        "other": "index.html",
+        "other_label": "切换到「每天 3 次」表",
+    },
+}
+MODE = "8h"
+
+TSV = MODES[MODE]["tsv"]
+HTML = MODES[MODE]["html"]
 
 HEADERS = ["统计时间", "众筹总人数", "较上一次统计净增长人数",
            "众筹总金额", "较上一次统计净增长金额",
@@ -190,11 +218,16 @@ def build_html(rows: list[tuple[str, int, float]], latest_ts: str) -> str:
   .up {{ color: #1f7a3d; }}
   .down {{ color: #b3261e; }}
   .none {{ color: #999; }}
+  .nav {{ margin: 0 0 12px; font-size: 13.5px; }}
+  .nav a {{ color: #0969da; text-decoration: none; border: 1px solid #d0d7de;
+            border-radius: 6px; padding: 3px 10px; }}
+  .nav a:hover {{ background: #f3f4f6; }}
 </style>
 </head>
 <body>
-  <h1>《艾希：续》众筹统计表</h1>
-  <div class="sub">数据来源：摩点项目页 160465 &nbsp;|&nbsp; 最新统计：{latest_ts} &nbsp;|&nbsp; 每小时自动更新（GitHub Actions）</div>
+  <h1>{MODES[MODE]["title"]}</h1>
+  <div class="sub">数据来源：摩点项目页 160465 &nbsp;|&nbsp; 最新统计：{latest_ts} &nbsp;|&nbsp; {MODES[MODE]["note"]}（GitHub Actions 自动更新）</div>
+  <div class="nav"><a href="{MODES[MODE]["other"]}">{MODES[MODE]["other_label"]} →</a></div>
   <div class="wrap">
   <table>
     {thead}
@@ -207,23 +240,39 @@ def build_html(rows: list[tuple[str, int, float]], latest_ts: str) -> str:
 
 
 # ---------------------------------------------------------------- 主流程
+def parse_mode() -> None:
+    """解析 --mode，把全局路径切换到对应数据集。"""
+    global MODE, TSV, HTML
+    ap = argparse.ArgumentParser(description="艾希：续 摩点众筹统计")
+    ap.add_argument("--mode", choices=sorted(MODES), default=None,
+                    help="8h=每天3次；hourly=每小时")
+    args, _ = ap.parse_known_args()
+    if args.mode:
+        MODE = args.mode
+        TSV = MODES[MODE]["tsv"]
+        HTML = MODES[MODE]["html"]
+
+
 def main() -> int:
+    parse_mode()
+    TSV.parent.mkdir(parents=True, exist_ok=True)
+
     now, backers, raised, goal = fetch_current()
     rows = read_tsv()
 
-    # 无历史：写入首条（不太会发生，防御一下）
+    # 无历史：写入首条（首次启用某个 mode 时走这里）
     if not rows:
         rows = [(now.strftime("%Y-%m-%d %H:%M:%S"), backers, raised)]
         write_tsv(rows)
         HTML.write_text(build_html(rows, rows[-1][0]), encoding="utf-8")
-        print(f"initialized: {rows[-1]}")
+        print(f"[{MODE}] initialized {TSV.name}: {rows[-1]}")
         return 0
 
     last_ts, last_backers, last_raised = rows[-1]
 
     # 数据没变化：跳过，避免空提交
     if backers == last_backers and abs(raised - last_raised) < 0.005:
-        print(f"no change since {last_ts}; skip")
+        print(f"[{MODE}] no change since {last_ts}; skip")
         return 0
 
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -232,8 +281,8 @@ def main() -> int:
     HTML.write_text(build_html(rows, stamp), encoding="utf-8")
 
     dp, dm = backers - last_backers, raised - last_raised
-    print(f"appended {stamp}: {backers:,} people / ¥{raised:,.2f} "
-          f"({fmt_int(dp)} / {fmt_money(dm)})")
+    print(f"[{MODE}] appended {stamp}: {backers:,} people / ¥{raised:,.2f} "
+          f"({fmt_int(dp)} / {fmt_money(dm)}) -> {TSV.name} + {HTML.name}")
     return 0
 
 
