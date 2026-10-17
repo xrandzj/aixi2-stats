@@ -1,0 +1,36 @@
+name: scrape-8h
+# 每天 3 次（北京时间 08:00 / 16:00 / 23:58），写 data/records-8h.tsv + index.html
+# cron 使用 UTC，+8 小时即为北京时间
+on:
+  schedule:
+    - cron: "0 0 * * *"
+    - cron: "0 8 * * *"
+    - cron: "58 15 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: stats-8h
+  cancel-in-progress: false
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run scraper
+        run: python scrape.py --mode 8h
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/records-8h.tsv index.html
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore(8h): update stats $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
+            git pull --rebase --autostash
+            git push
+          fi
