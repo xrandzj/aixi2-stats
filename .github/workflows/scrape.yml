@@ -2,7 +2,10 @@ name: scrape
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    # 北京时间 08:00 / 16:00 / 23:58 （cron 用 UTC，+8 小时后即为目标时间）
+    - cron: "0 0 * * *"
+    - cron: "0 8 * * *"
+    - cron: "50 15 * * *"
   workflow_dispatch: {}
 
 permissions:
