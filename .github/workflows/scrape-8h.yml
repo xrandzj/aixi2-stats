@@ -1,11 +1,16 @@
 name: scrape-8h
-# 每天 3 次（北京时间 08:00 / 16:00 / 23:58），写 data/records-8h.tsv + index.html
-# cron 使用 UTC，+8 小时即为北京时间
+# 每天 3 次（北京时间约 08:00 / 16:00 / 23:50），cron 用 UTC。
+#
+# 同样做了排队补偿：实测 GitHub 免费 cron 会稳定延后 21~28 分钟，
+# 所以每个时间点都提前 25 分钟触发。
+#
+# 手动触发（Run workflow）只做抓取测试，不写数据。
+# 数据文件：data/records-8h.tsv
 on:
   schedule:
-    - cron: "0 0 * * *"
-    - cron: "0 8 * * *"
-    - cron: "50 15 * * *"
+    - cron: "35 23 * * *"   # UTC 23:35 = 北京 07:35 → 约 08:00
+    - cron: "35 7 * * *"    # UTC 07:35 = 北京 15:35 → 约 16:00
+    - cron: "25 15 * * *"   # UTC 15:25 = 北京 23:25 → 约 23:50
   workflow_dispatch: {}
 permissions:
   contents: write
@@ -21,8 +26,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run scraper
-        run: python scrape.py --mode 8h
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "手动触发：只测试，不写入"
+            python scrape.py --mode 8h --dry-run
+          else
+            python scrape.py --mode 8h
+          fi
       - name: Commit and push
+        if: github.event_name != 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
