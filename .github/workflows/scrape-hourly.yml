@@ -1,31 +1,30 @@
 name: scrape-hourly
-
-# 每小时整点跑到一条（GitHub 通常延迟几分钟，记录真实时间如 09:05）。
+# 每小时一条，记录真实时间（如 09:58、10:02）。
+#
+# 为什么是 "35 * * * *" 而不是 "0 * * * *"：
+#   实测 GitHub 的免费 cron 会稳定排队 21~28 分钟才真正执行，
+#   所以把触发时间提前 25 分钟（整点前 25 分），排队后正好落在整点附近。
+#   如果日后发现偏移变了，改这个分钟数重新校准即可。
+#
 # 手动触发（Run workflow）只做抓取测试，不写数据，避免污染表格。
 # 数据文件：data/records-hourly.tsv
-
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "35 * * * *"
   workflow_dispatch: {}
-
 permissions:
   contents: write
-
 concurrency:
   group: stats-hourly
   cancel-in-progress: false
-
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Run scraper
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -34,7 +33,6 @@ jobs:
           else
             python scrape.py --mode hourly
           fi
-
       - name: Commit and push
         if: github.event_name != 'workflow_dispatch'
         run: |
