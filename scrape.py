@@ -55,9 +55,9 @@ MODE = "8h"
 TSV = MODES[MODE]["tsv"]
 HTML = MODES[MODE]["html"]
 
-HEADERS = ["统计时间", "众筹总人数", "较上一次统计净增长人数",
-           "众筹总金额", "较上一次统计净增长金额",
-           "较前一日最后一次净增长人数", "较前一日最后一次净增长金额"]
+HEADERS = ["统计时间", "众筹总人数", "增长人数",
+           "众筹总金额", "增长金额",
+           "较前日增长人数", "较前日增长金额"]
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
